@@ -33,6 +33,9 @@ struct FloatRange {
 // -----------------------------------------------------------------
 // The thing
 
+constexpr uint32_t LOWER_BIT_COUNT = 24;
+// Idk what will be best here yet, will find out empirically.
+
 constexpr uint32_t NUM_BUCKETS = 10;
 constexpr uint32_t BUCKET_RANGE_SIZE = std::floor(0.2f * NUM_BUCKETS) + 1;
 // Buckets are 1/NUM_BUCKETS wide. This makes each query for a range [n, n+0.2]
@@ -158,8 +161,10 @@ int main() {
 
     std::printf("Filling LUTs...\n");
     auto t1 = timer_start();
-    for (uint32_t bits = 0; bits < (1u << 24); bits++) {
+    for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
         lowerLut.addLowerBits(bits, constraints);
+    }
+    for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
         upperLut.addUpperBits(bits);
     }
     timer_stop(t1);

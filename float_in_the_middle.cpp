@@ -28,7 +28,7 @@ struct FloatRange {
         this->min = std::floor(min * FLOAT_TO_INT_UNIT);
         this->max = std::ceil(max * FLOAT_TO_INT_UNIT);
     }
-}
+};
 
 // -----------------------------------------------------------------
 // The thing
@@ -37,9 +37,9 @@ constexpr uint32_t LOWER_BIT_COUNT = 24;
 // Idk what will be best here yet, will find out empirically.
 
 constexpr uint32_t NUM_BUCKETS = 10;
-constexpr uint32_t BUCKET_RANGE_SIZE = std::floor(0.2f * NUM_BUCKETS) + 1;
+constexpr uint32_t BUCKET_RANGE_SIZE = 3;
 // Buckets are 1/NUM_BUCKETS wide. This makes each query for a range [n, n+0.2]
-// check BUCKET_RANGE_SIZE buckets per layer.
+// check BUCKET_RANGE_SIZE = floor(0.2 * NUM_BUCKETS) + 1 buckets per layer.
 
 constexpr uint32_t NUM_LAYERS = 6;
 // The number of layers is a key parameter here, because it dictates
@@ -47,7 +47,14 @@ constexpr uint32_t NUM_LAYERS = 6;
 // signatures for the lower bits. Pushing this higher increases filtering power 
 // and the size of the LUT, and reduces signature overlap.
 
-constexpr uint32_t UNIQUE_SIGNATURES = std::pow(NUM_BUCKETS, NUM_LAYERS);
+constexpr uint32_t pow(uint32_t a, uint32_t n) {
+    uint32_t r = 1;
+    for (uint32_t i = 0; i < n; i++) {
+        r *= a;
+    }
+    return r;
+}
+constexpr uint32_t UNIQUE_SIGNATURES = pow(NUM_BUCKETS, NUM_LAYERS);
 
 // LUT structure used by both upper bit list and lower bit list
 
@@ -89,12 +96,12 @@ struct LUT {
             bucketRangeSig += m / NUM_BUCKETS;
         }
 
-        enTree[bucket].push_back(newEntry);
+        enTree[bucketRangeSig].push_back(newEntry);
     }
 
     void addUpperBits(uint32_t upperBits) {
         LUTEntry newEntry;
-        newEntry.bits = lowerBits;
+        newEntry.bits = upperBits;
 
         // store nextFloat contributions
         uint64_t state = static_cast<uint64_t>(upperBits) << 24;
@@ -133,18 +140,21 @@ void float_in_the_middle(LUT& lowerLut, LUT& upperLut) {
 // -----------------------------------------------------------------
 // Time to actually use the thing now
 
-std::chrono::timepoint_t timer_start() {
-    return std::chrono::steady_clock::now();
+typedef std::chrono::steady_clock clock;
+typedef std::chrono::time_point<std::chrono::steady_clock> timepoint;
+
+timepoint timer_start() {
+    return clock::now();
 }
 
-void timer_stop(std::chrono::timepoint_t start) {
-    auto end = std::chrono::steady_clock::now();
+void timer_stop(timepoint start) {
+    auto end = clock::now();
     double ms = (end-start).count() * 1e-6;
     std::printf("Took %f ms.\n", ms);
 }
 
 int main() {
-    auto t3 = timer_start();
+    timepoint t3;
     {
         std::vector<FloatRange> constraints({{
             FloatRange(0.0f, 0.2f),
@@ -157,8 +167,8 @@ int main() {
         
         std::printf("Initializing LUTs...\n");
         auto t0 = timer_start();
-        LUT upperLut();
-        LUT lowerLut();
+        LUT upperLut;
+        LUT lowerLut;
         timer_stop(t0);
 
         std::printf("Filling LUTs...\n");

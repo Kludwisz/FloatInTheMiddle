@@ -142,11 +142,15 @@ uint64_t counter = 0;
 
 void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
     if (depth == 6) {
-        std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(partial_bucket);
-        for (auto& low : lowerEntries) {
-            for (auto& up : upperEntries) {
-                // TODO full check here
-                counter++;
+        for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
+            uint32_t new_partial = partial_bucket * NUM_BUCKETS;
+            uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
+            std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial);
+            for (auto& low : lowerEntries) {
+                for (auto& up : upperEntries) {
+                    // TODO full check here
+                    counter++;
+                }
             }
         }
         return;

@@ -66,7 +66,7 @@ struct LUT {
         }
     }
 
-    void addLowerBits(uint32_t lowerBits, std::vector<) {
+    void addLowerBits(uint32_t lowerBits, const std::vector<FloatRange>& constraints) {
         LUTEntry newEntry;
         newEntry.bits = lowerBits;
 
@@ -80,7 +80,10 @@ struct LUT {
             newEntry.values[i] = bits >> 24;
 
             bucketRangeSig *= NUM_BUCKETS;
-            bucketRangeSig += bits / NUM_BUCKETS;
+            uint32_t m = bits + constraints[i].min;
+            if (m > FLOAT_TO_INT_UNIT) m -= FLOAT_TO_INT_UNIT;
+
+            bucketRangeSig += m / NUM_BUCKETS;
         }
 
         enTree[bucket].push_back(newEntry);

@@ -37,7 +37,7 @@ struct FloatRange {
 constexpr uint32_t LOWER_BIT_COUNT = 24;
 // Idk what will be best here yet, will find out empirically.
 
-constexpr uint32_t NUM_BUCKETS = 10;
+constexpr uint32_t NUM_BUCKETS = 10; // 0.0-0.1, 0.1-0.2, 0.2-0.3
 constexpr uint32_t BUCKET_WIDTH = (FLOAT_TO_INT_UNIT + NUM_BUCKETS - 1) / NUM_BUCKETS;
 constexpr uint32_t BUCKET_RANGE_SIZE = 3;
 // Buckets are 1/NUM_BUCKETS wide. This makes each query for a range [n, n+0.2]
@@ -130,21 +130,45 @@ struct LUT {
     }
 
     std::vector<LUTEntry>& getEntriesForBucket(uint32_t bucket) {
+        if (bucket >= UNIQUE_SIGNATURES) {
+            std::printf("Out of bounds access - %u\n", bucket);
+            return enTree[0];
+        }
         return enTree[bucket];
     }
 };
 
+uint64_t counter = 0;
 
+void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
+    if (depth == 6) {
+        std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(partial_bucket);
+        for (auto& low : lowerEntries) {
+            for (auto& up : upperEntries) {
+                // TODO full check here
+                counter++;
+            }
+        }
+        return;
+    }
+    
+    for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
+        uint32_t new_partial = partial_bucket * NUM_BUCKETS;
+        uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
+        //std::printf("partial: %u  digit: %u\n", new_partial, digit);
+        lookup_bucket_range(lowerEntries, upperLut, remaining_sig/NUM_BUCKETS, new_partial+digit, depth+1);
+    }
+}
 
 void float_in_the_middle(LUT& lowerLut, LUT& upperLut) {
-    // TODO
+    for (uint32_t startBucketSig = 0; startBucketSig < UNIQUE_SIGNATURES; startBucketSig++) {
+        //std::printf("bucket: %u\n", startBucketSig);
+        std::vector<LUTEntry>& lowerEntries = lowerLut.getEntriesForBucket(startBucketSig);
+        if (lowerEntries.empty())
+            continue;
 
-    // iterate over bucket range signatures in the lower LUT.
-    // for each non-empty vector, iterate over all buckets in the upper LUT
-    // that fall into the bucket range.
-
-    // In the innermost loop, pair each lower vec element 
-    // with each upper vec element and check constraint satisfaction.
+        lookup_bucket_range(lowerEntries, upperLut, startBucketSig, 0, 1);
+    }
 }
 
 // -----------------------------------------------------------------
@@ -195,6 +219,8 @@ int main() {
         auto t2 = timer_now();
         float_in_the_middle(lowerLut, upperLut);
         timer_get_elapsed(t2);
+
+        std::printf("%llu increments\n", counter);
 
         t3 = timer_now();
         std::printf("Deallocating memory...\n");

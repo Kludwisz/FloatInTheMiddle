@@ -38,6 +38,7 @@ constexpr uint32_t LOWER_BIT_COUNT = 24;
 // Idk what will be best here yet, will find out empirically.
 
 constexpr uint32_t NUM_BUCKETS = 10;
+constexpr uint32_t BUCKET_WIDTH = (FLOAT_TO_INT_UNIT + NUM_BUCKETS - 1) / NUM_BUCKETS;
 constexpr uint32_t BUCKET_RANGE_SIZE = 3;
 // Buckets are 1/NUM_BUCKETS wide. This makes each query for a range [n, n+0.2]
 // check BUCKET_RANGE_SIZE = floor(0.2 * NUM_BUCKETS) + 1 buckets per layer.
@@ -94,9 +95,13 @@ struct LUT {
             uint32_t m = bits + constraints[i].min;
             if (m > FLOAT_TO_INT_UNIT) m -= FLOAT_TO_INT_UNIT;
 
-            bucketRangeSig += m / NUM_BUCKETS;
+            bucketRangeSig += m / BUCKET_WIDTH;
         }
 
+        if (bucketRangeSig > UNIQUE_SIGNATURES) {
+            printf("BAD LOWER INDEX: %u\n", bucketRangeSig);
+            return;
+        }
         enTree[bucketRangeSig].push_back(newEntry);
     }
 
@@ -111,12 +116,16 @@ struct LUT {
         for (int i = 0; i < NUM_LAYERS; i++) {
             state = (state * A) & MASK;
             uint32_t bits = state >> 24;
-            newEntry.values[i] = bits >> 24;
+            newEntry.values[i] = bits;
 
             bucketSig *= NUM_BUCKETS;
-            bucketSig += bits / NUM_BUCKETS;
+            bucketSig += bits / BUCKET_WIDTH;
         }
 
+        if (bucketSig > UNIQUE_SIGNATURES) {
+            printf("BAD UPPER INDEX: %u\n", bucketSig);
+            return;
+        }
         enTree[bucketSig].push_back(newEntry);
     }
 

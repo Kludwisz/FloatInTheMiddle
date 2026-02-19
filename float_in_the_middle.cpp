@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdio>
 #include <cstdint>
 #include <vector>
 #include <chrono>
@@ -140,15 +141,14 @@ void float_in_the_middle(LUT& lowerLut, LUT& upperLut) {
 // -----------------------------------------------------------------
 // Time to actually use the thing now
 
-typedef std::chrono::steady_clock clock;
 typedef std::chrono::time_point<std::chrono::steady_clock> timepoint;
 
-timepoint timer_start() {
-    return clock::now();
+timepoint timer_now() {
+    return std::chrono::steady_clock::now();
 }
 
-void timer_stop(timepoint start) {
-    auto end = clock::now();
+void timer_get_elapsed(timepoint start) {
+    auto end = timer_now();
     double ms = (end-start).count() * 1e-6;
     std::printf("Took %f ms.\n", ms);
 }
@@ -166,30 +166,30 @@ int main() {
         }});
         
         std::printf("Initializing LUTs...\n");
-        auto t0 = timer_start();
+        auto t0 = timer_now();
         LUT upperLut;
         LUT lowerLut;
-        timer_stop(t0);
+        timer_get_elapsed(t0);
 
         std::printf("Filling LUTs...\n");
-        auto t1 = timer_start();
+        auto t1 = timer_now();
         for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
             lowerLut.addLowerBits(bits, constraints);
         }
         for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
             upperLut.addUpperBits(bits);
         }
-        timer_stop(t1);
+        timer_get_elapsed(t1);
 
         std::printf("Float-in-the-middle search running...\n");
         
-        auto t2 = timer_start();
+        auto t2 = timer_now();
         float_in_the_middle(lowerLut, upperLut);
-        timer_stop(t2);
+        timer_get_elapsed(t2);
 
-        t3 = timer_start();
+        t3 = timer_now();
         std::printf("Deallocating memory...\n");
     }
-    timer_stop(t3);
+    timer_get_elapsed(t3);
     std::printf("Done.\n");
 }

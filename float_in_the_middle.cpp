@@ -144,36 +144,42 @@ void timer_stop(std::chrono::timepoint_t start) {
 }
 
 int main() {
-    std::vector<FloatRange> constraints({{
-        FloatRange(0.0f, 0.2f),
-        FloatRange(0.0f, 0.2f),
-        FloatRange(0.0f, 0.2f),
-        FloatRange(0.0f, 0.2f),
-        FloatRange(0.0f, 0.2f),
-        FloatRange(0.0f, 0.2f)
-    }});
-    
-    std::printf("Initializing LUTs...\n");
-    auto t0 = timer_start();
-    LUT upperLut();
-    LUT lowerLut();
-    timer_stop(t0);
+    auto t3 = timer_start();
+    {
+        std::vector<FloatRange> constraints({{
+            FloatRange(0.0f, 0.2f),
+            FloatRange(0.0f, 0.2f),
+            FloatRange(0.0f, 0.2f),
+            FloatRange(0.0f, 0.2f),
+            FloatRange(0.0f, 0.2f),
+            FloatRange(0.0f, 0.2f)
+        }});
+        
+        std::printf("Initializing LUTs...\n");
+        auto t0 = timer_start();
+        LUT upperLut();
+        LUT lowerLut();
+        timer_stop(t0);
 
-    std::printf("Filling LUTs...\n");
-    auto t1 = timer_start();
-    for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
-        lowerLut.addLowerBits(bits, constraints);
+        std::printf("Filling LUTs...\n");
+        auto t1 = timer_start();
+        for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
+            lowerLut.addLowerBits(bits, constraints);
+        }
+        for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
+            upperLut.addUpperBits(bits);
+        }
+        timer_stop(t1);
+
+        std::printf("Float-in-the-middle search running...\n");
+        
+        auto t2 = timer_start();
+        float_in_the_middle(lowerLut, upperLut);
+        timer_stop(t2);
+
+        t3 = timer_start();
+        std::printf("Deallocating memory...\n");
     }
-    for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
-        upperLut.addUpperBits(bits);
-    }
-    timer_stop(t1);
-
-    std::printf("Float-in-the-middle search running...\n");
-    
-    auto t2 = timer_start();
-    float_in_the_middle(lowerLut, upperLut);
-    timer_stop(t2);
-
-    std::printf("Finished.\n");
+    timer_stop(t3);
+    std::printf("Done.\n");
 }

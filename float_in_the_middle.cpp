@@ -160,14 +160,22 @@ struct LowerLUT : public BaseLUT {
     LowerLUT(const std::vector<FloatRange>& constr) 
         : BaseLUT(constr, 1U << LOWER_BIT_COUNT) {}
 
-    virtual uint32_t signature(uint32_t upperBits) const override {
-        uint32_t bucketSig = 0;
-        for (int i = NUM_LAYERS - 1; i >= 0; i--) {
-            uint32_t bits = static_cast<uint32_t>((upperBits * constraints[i].lcgA) & MASK_24);
-            bucketSig *= NUM_BUCKETS;
-            bucketSig += bits / BUCKET_WIDTH; // FIXME this could be inaccurate
+    virtual uint32_t signature(uint32_t lowerBits) const override {
+        // store nextFloat contributions
+        uint32_t bucketRangeSig = 0;
+
+        for (int i = 0; i < NUM_LAYERS; i++) {
+            uint64_t state = (lowerBits * constraints[i].lcgA + constraints[i].lcgB) & MASK_48;
+            uint32_t bits = state >> 24;
+
+            bucketRangeSig *= NUM_BUCKETS;
+            uint32_t rangeMin = FLOAT_TO_INT_UNIT + constraints[i].min - bits;
+            if (rangeMin > FLOAT_TO_INT_UNIT) rangeMin -= FLOAT_TO_INT_UNIT;
+
+            bucketRangeSig += rangeMin / BUCKET_WIDTH; // FIXME this could be inaccurate
         }
-        return bucketSig;
+
+        return bucketRangeSig;
     }
 };
 
@@ -182,9 +190,9 @@ struct SearchNode {
 
 void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
     if (depth == 6) {
-        for (int i = 0; i < 1; i++) {//FIXME BUCKET_RANGE_SIZE
-            uint32_t new_partial = partial_bucket * NUM_BUCKETS;
+        for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
+            uint32_t new_partial = partial_bucket * NUM_BUCKETS + digit;
             uint32_t bucketOffset = node.upperLut.bucketOffsets[new_partial];
             uint32_t numElements = node.upperLut.bucketSizes[new_partial];
             
@@ -214,7 +222,7 @@ void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t part
         return;
     }
     
-    for (int i = 0; i < 1; i++) {//FIXME BUCKET_RANGE_SIZE
+    for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
         uint32_t new_partial = partial_bucket * NUM_BUCKETS;
         uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
         lookup_bucket_range(node, remaining_sig/NUM_BUCKETS, new_partial+digit, depth+1);

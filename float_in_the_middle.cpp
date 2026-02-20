@@ -137,7 +137,9 @@ struct LUT {
         // store nextFloat contributions
         uint32_t bucketSig = 0;
 
-        for (int i = 0; i < NUM_LAYERS; i++) {
+        // flip bucket signature calculation
+        //for (int i = 0; i < NUM_LAYERS; i++) {
+        for (int i = NUM_LAYERS - 1; i >= 0; i--) {
             uint32_t bits = static_cast<uint32_t>((upperBits * constraints[i].lcgA) & MASK_24);
             newEntry.values[i] = bits;
 
@@ -168,7 +170,7 @@ void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uin
         for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
             uint32_t new_partial = partial_bucket * NUM_BUCKETS;
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
-            std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial);
+            std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial + digit);
             
             for (auto& low : lowerEntries) {
                 for (auto& high : upperEntries) {
@@ -177,7 +179,7 @@ void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uin
                     const auto& constr = upperLut.constraints;
                     for (int c = 0; c < NUM_LAYERS; c++) {
                         uint32_t combinedValue = (low.values[c] + high.values[c]) & MASK_24;
-                        passed &= constr[i].min <= combinedValue && combinedValue <= constr[i].max;
+                        passed &= constr[c].min <= combinedValue && combinedValue <= constr[c].max;
                         if (!passed) break; 
                     }
 

@@ -7,13 +7,13 @@
 
 // Java Random
 
-constexpr uint64_t MASK = (1ULL << 48) - 1;
+constexpr uint64_t MASK_48 = (1ULL << 48) - 1;
 constexpr uint32_t MASK_24 = (1U << 24) - 1;
 constexpr uint64_t A = 0x5deece66d;
 constexpr uint32_t B = 11;
 
 inline void nextSeed(uint64_t* rand) {
-    *rand = (*rand * A + B) & MASK;
+    *rand = (*rand * A + B) & MASK_48;
 }
 
 inline uint32_t nextFloatBits(uint64_t* rand) {
@@ -28,12 +28,32 @@ struct FloatRange {
     uint64_t lcgA;
     uint64_t lcgB;
 
-    // TODO FIXME use lcgSteps
     FloatRange(float min, float max, int64_t lcgSteps) {
         this->min = std::floor(min * FLOAT_TO_INT_UNIT);
         this->max = std::ceil(max * FLOAT_TO_INT_UNIT);
         this->lcgA = A;
         this->lcgB = B;
+        lcgCombine(lcgSteps);
+    }
+
+private:
+    void lcgCombine(int64_t steps) {
+        uint64_t real_steps = static_cast<uint64_t>(steps) & MASK_48;
+        uint64_t combA = lcgA;
+        uint64_t combB = lcgB;
+        lcgA = 1;
+        lcgB = 0;
+
+        // A2(A1*x + B1) + B2 = A1A2 * x + A2B1 + B2
+        for (int i = 0; i < 48; i++) {
+            if (real_steps & 1) {
+                lcgB = (lcgB * combA + combB) & MASK_48;
+                lcgA = (lcgA * combA) & MASK_48;
+            }
+            combB = (combB * combA + combB) & MASK_48;
+            combA = (combA * combA) & MASK_48;
+            real_steps >>= 1;
+        }
     }
 };
 
@@ -90,11 +110,10 @@ struct LUT {
         newEntry.bits = lowerBits;
 
         // store nextFloat contributions
-        uint64_t state = static_cast<uint64_t>(lowerBits);
         uint32_t bucketRangeSig = 0;
 
         for (int i = 0; i < NUM_LAYERS; i++) {
-            state = (state * constraints[i].lcgA + constraints[i].lcgB) & MASK;
+            uint64_t state = (lowerBits * constraints[i].lcgA + constraints[i].lcgB) & MASK_48;
             uint32_t bits = state >> 24;
             newEntry.values[i] = bits;
 
@@ -102,7 +121,7 @@ struct LUT {
             uint32_t rangeMin = FLOAT_TO_INT_UNIT + constraints[i].min - bits;
             if (rangeMin > FLOAT_TO_INT_UNIT) rangeMin -= FLOAT_TO_INT_UNIT;
 
-            bucketRangeSig += rangeMin / BUCKET_WIDTH;
+            bucketRangeSig += rangeMin / BUCKET_WIDTH; // FIXME this could be inaccurate
         }
 
         if (bucketRangeSig > UNIQUE_SIGNATURES) {
@@ -117,16 +136,14 @@ struct LUT {
         newEntry.bits = upperBits;
 
         // store nextFloat contributions
-        uint64_t state = static_cast<uint64_t>(upperBits) << 24;
         uint32_t bucketSig = 0;
 
         for (int i = 0; i < NUM_LAYERS; i++) {
-            state = (state * constraints[i].lcgA) & MASK;
-            uint32_t bits = state >> 24;
+            uint32_t bits = static_cast<uint32_t>((upperBits * constraints[i].lcgA) & MASK_24);
             newEntry.values[i] = bits;
 
             bucketSig *= NUM_BUCKETS;
-            bucketSig += bits / BUCKET_WIDTH;
+            bucketSig += bits / BUCKET_WIDTH; // FIXME this could be inaccurate
         }
 
         if (bucketSig > UNIQUE_SIGNATURES) {
@@ -153,6 +170,7 @@ void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uin
             uint32_t new_partial = partial_bucket * NUM_BUCKETS;
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
             std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial);
+            
             for (auto& low : lowerEntries) {
                 for (auto& high : upperEntries) {
                     // Full check against stored FloatRange constraints
@@ -211,12 +229,12 @@ int main() {
     timepoint t3;
     {
         std::vector<FloatRange> constraints({{
-            FloatRange(0.0f, 0.2f),
-            FloatRange(0.0f, 0.2f),
-            FloatRange(0.0f, 0.2f),
-            FloatRange(0.0f, 0.2f),
-            FloatRange(0.0f, 0.2f),
-            FloatRange(0.0f, 0.2f)
+            FloatRange(0.0f, 0.2f, 1),
+            FloatRange(0.0f, 0.2f, 2),
+            FloatRange(0.0f, 0.2f, 3),
+            FloatRange(0.0f, 0.2f, 4),
+            FloatRange(0.0f, 0.2f, 5),
+            FloatRange(0.0f, 0.2f, 6)
         }});
         
         std::printf("Initializing LUTs...\n");
@@ -241,7 +259,8 @@ int main() {
         float_in_the_middle(lowerLut, upperLut);
         timer_get_elapsed(t2);
 
-        std::printf("%llu increments\n", counter);
+        std::printf("%llu states passed full check,\n", counter);
+        std::printf("%llu states were expected.\n", (1ULL << 48) / pow(5, NUM_LAYERS));
 
         t3 = timer_now();
         std::printf("Deallocating memory...\n");

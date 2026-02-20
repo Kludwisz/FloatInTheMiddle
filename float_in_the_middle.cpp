@@ -1,6 +1,5 @@
-#include <algorithm>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 #include <chrono>
 #include <cmath>

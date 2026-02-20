@@ -83,8 +83,96 @@ constexpr uint32_t pow(uint32_t a, uint32_t n) {
 }
 constexpr uint32_t UNIQUE_SIGNATURES = pow(NUM_BUCKETS, NUM_LAYERS);
 
-// LUT structure used by both upper bit list and lower bit list
+// Data structures
 
+class BaseLUT {
+public:
+    const std::vector<FloatRange>& constraints;
+
+    uint32_t* entries;
+    uint32_t* bucketSizes;
+    uint32_t* bucketOffsets; 
+    uint32_t numEntries;
+
+    BaseLUT(const std::vector<FloatRange>& constr, uint32_t numEntries) : numEntries(numEntries), constraints(constr) {
+        entries = new uint32_t[numEntries];
+        bucketOffsets = new uint32_t[UNIQUE_SIGNATURES];
+        bucketSizes = new uint32_t[UNIQUE_SIGNATURES];
+        numEntries = 0;
+    }
+
+    ~BaseLUT() {
+        if (entries != nullptr) delete[] entries;
+        if (bucketSizes != nullptr) delete[] bucketSizes;
+        if (bucketOffsets != nullptr) delete[] bucketOffsets;
+    }
+
+    virtual uint32_t signature(uint32_t bits) const = 0;
+
+    virtual void build() {
+        uint32_t* currentCounts = new uint32_t[UNIQUE_SIGNATURES];
+
+        // zero-out offset & count array
+        for (uint32_t s = 0; s < UNIQUE_SIGNATURES; s++) {
+            bucketOffsets[s] = 0;
+            bucketSizes[s] = 0;
+            currentCounts[s] = 0;
+        }
+
+        // calc bucket signatures for each upper bit possibility
+        // and update offsets appropriately
+        for (uint32_t upperBits = 0; upperBits < numEntries; upperBits++) {
+            uint32_t s = signature(upperBits);
+            bucketSizes[s]++;
+        }
+        for (uint32_t s = 1; s < UNIQUE_SIGNATURES; s++) {
+            bucketOffsets[s] = bucketOffsets[s-1] + bucketSizes[s-1];
+        }
+
+        // add entries
+        for (uint32_t upperBits = 0; upperBits < numEntries; upperBits++) {
+            uint32_t s = signature(upperBits);
+            uint32_t total_offset = bucketOffsets[s] + currentCounts[s];
+            currentCounts[s]++;
+            entries[total_offset] = upperBits;
+        }
+
+        delete[] currentCounts;
+    }
+};
+
+struct UpperLUT : public BaseLUT {
+    UpperLUT(const std::vector<FloatRange>& constr) 
+        : BaseLUT(constr, 1U << 48-LOWER_BIT_COUNT) {}
+
+    virtual uint32_t signature(uint32_t upperBits) const override {
+        uint32_t bucketSig = 0;
+        for (int i = NUM_LAYERS - 1; i >= 0; i--) {
+            uint32_t bits = static_cast<uint32_t>((upperBits * constraints[i].lcgA) & MASK_24);
+            bucketSig *= NUM_BUCKETS;
+            bucketSig += bits / BUCKET_WIDTH; // FIXME this could be inaccurate
+        }
+        return bucketSig;
+    }
+};
+
+struct LowerLUT : public BaseLUT {
+    LowerLUT(const std::vector<FloatRange>& constr) 
+        : BaseLUT(constr, 1U << LOWER_BIT_COUNT) {}
+
+    virtual uint32_t signature(uint32_t upperBits) const override {
+        uint32_t bucketSig = 0;
+        for (int i = NUM_LAYERS - 1; i >= 0; i--) {
+            uint32_t bits = static_cast<uint32_t>((upperBits * constraints[i].lcgA) & MASK_24);
+            bucketSig *= NUM_BUCKETS;
+            bucketSig += bits / BUCKET_WIDTH; // FIXME this could be inaccurate
+        }
+        return bucketSig;
+    }
+};
+
+
+/*
 struct LUTEntry {
     uint32_t bits;
     uint32_t values[NUM_LAYERS];
@@ -162,23 +250,36 @@ struct LUT {
         return enTree[bucket];
     }
 };
-
+*/
 uint64_t counter = 0;
 
-void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
+struct SearchNode {
+    UpperLUT& upperLut;
+    uint32_t* lowerArray;
+    uint32_t lowerArraySize;
+};
+
+void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
     if (depth == 6) {
-        for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
+        for (int i = 0; i < 1; i++) {//FIXME BUCKET_RANGE_SIZE
             uint32_t new_partial = partial_bucket * NUM_BUCKETS;
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
-            std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial + digit);
+            uint32_t bucketOffset = node.upperLut.bucketOffsets[new_partial];
+            uint32_t numElements = node.upperLut.bucketSizes[new_partial];
             
-            for (auto& low : lowerEntries) {
-                for (auto& high : upperEntries) {
+            for (int lowIdx = 0; lowIdx < node.lowerArraySize; lowIdx++) {
+                uint32_t lowBits = node.lowerArray[lowIdx];
+
+                for (int highIdx = bucketOffset; highIdx < bucketOffset + numElements; highIdx++) {
                     // Full check against stored FloatRange constraints
                     bool passed = true;
-                    const auto& constr = upperLut.constraints;
+                    const auto& constr = node.upperLut.constraints;
+                    uint32_t highBits = node.upperLut.entries[highIdx];
+                    
                     for (int c = 0; c < NUM_LAYERS; c++) {
-                        uint32_t combinedValue = (low.values[c] + high.values[c]) & MASK_24;
+                        uint32_t highValue = static_cast<uint32_t>((highBits * constr[c].lcgA) & MASK_24);
+                        uint32_t lowValue = static_cast<uint32_t>(((lowBits * constr[c].lcgA + constr[c].lcgB) >> 24) & MASK_24);
+                        uint32_t combinedValue = (lowValue + highValue) & MASK_24;
                         passed &= constr[c].min <= combinedValue && combinedValue <= constr[c].max;
                         if (!passed) break; 
                     }
@@ -192,22 +293,26 @@ void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uin
         return;
     }
     
-    for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
+    for (int i = 0; i < 1; i++) {//FIXME BUCKET_RANGE_SIZE
         uint32_t new_partial = partial_bucket * NUM_BUCKETS;
         uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
-        //std::printf("partial: %u  digit: %u\n", new_partial, digit);
-        lookup_bucket_range(lowerEntries, upperLut, remaining_sig/NUM_BUCKETS, new_partial+digit, depth+1);
+        lookup_bucket_range(node, remaining_sig/NUM_BUCKETS, new_partial+digit, depth+1);
     }
 }
 
-void float_in_the_middle(LUT& lowerLut, LUT& upperLut) {
+void float_in_the_middle(LowerLUT& lowerLut, UpperLUT& upperLut) {
     for (uint32_t startBucketSig = 0; startBucketSig < UNIQUE_SIGNATURES; startBucketSig++) {
-        //std::printf("bucket: %u\n", startBucketSig);
-        std::vector<LUTEntry>& lowerEntries = lowerLut.getEntriesForBucket(startBucketSig);
-        if (lowerEntries.empty())
+        uint32_t lowArraySize = lowerLut.bucketSizes[startBucketSig];
+        if (lowArraySize == 0)
             continue;
 
-        lookup_bucket_range(lowerEntries, upperLut, startBucketSig, 0, 1);
+        SearchNode sn {
+            upperLut,
+            &(lowerLut.entries[lowerLut.bucketOffsets[startBucketSig]]),
+            lowArraySize
+        };
+
+        lookup_bucket_range(sn, startBucketSig, 0, 1);
     }
 }
 
@@ -240,18 +345,14 @@ int main() {
         
         std::printf("Initializing LUTs...\n");
         auto t0 = timer_now();
-        LUT upperLut(constraints);
-        LUT lowerLut(constraints);
+        UpperLUT upperLut(constraints);
+        LowerLUT lowerLut(constraints);
         timer_get_elapsed(t0);
 
         std::printf("Filling LUTs...\n");
         auto t1 = timer_now();
-        for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
-            lowerLut.addLowerBits(bits);
-        }
-        for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
-            upperLut.addUpperBits(bits);
-        }
+        lowerLut.build();
+        upperLut.build();
         timer_get_elapsed(t1);
 
         std::printf("Float-in-the-middle search running...\n");

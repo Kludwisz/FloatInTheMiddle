@@ -8,6 +8,7 @@
 // Java Random
 
 constexpr uint64_t MASK = (1ULL << 48) - 1;
+constexpr uint32_t MASK_24 = (1U << 24) - 1;
 constexpr uint64_t A = 0x5deece66d;
 constexpr uint32_t B = 11;
 
@@ -24,10 +25,15 @@ constexpr uint32_t FLOAT_TO_INT_UNIT = 1u << 24;
 struct FloatRange {
     uint32_t min;
     uint32_t max;
+    uint64_t lcgA;
+    uint64_t lcgB;
 
-    FloatRange(float min, float max) {
+    // TODO FIXME use lcgSteps
+    FloatRange(float min, float max, int64_t lcgSteps) {
         this->min = std::floor(min * FLOAT_TO_INT_UNIT);
         this->max = std::ceil(max * FLOAT_TO_INT_UNIT);
+        this->lcgA = A;
+        this->lcgB = B;
     }
 };
 
@@ -67,8 +73,9 @@ struct LUTEntry {
 struct LUT {
     // vector index = bucket signature
     std::vector<LUTEntry>* enTree = nullptr;
+    const std::vector<FloatRange>& constraints;
 
-    LUT() {
+    LUT(const std::vector<FloatRange>& constraints) : constraints(constraints) {
         enTree = new std::vector<LUTEntry>[UNIQUE_SIGNATURES];
     }
 
@@ -78,7 +85,7 @@ struct LUT {
         }
     }
 
-    void addLowerBits(uint32_t lowerBits, const std::vector<FloatRange>& constraints) {
+    void addLowerBits(uint32_t lowerBits) {
         LUTEntry newEntry;
         newEntry.bits = lowerBits;
 
@@ -87,15 +94,15 @@ struct LUT {
         uint32_t bucketRangeSig = 0;
 
         for (int i = 0; i < NUM_LAYERS; i++) {
-            state = (state * A + B) & MASK;
+            state = (state * constraints[i].lcgA + constraints[i].lcgB) & MASK;
             uint32_t bits = state >> 24;
             newEntry.values[i] = bits;
 
             bucketRangeSig *= NUM_BUCKETS;
-            uint32_t m = bits + constraints[i].min;
-            if (m > FLOAT_TO_INT_UNIT) m -= FLOAT_TO_INT_UNIT;
+            uint32_t rangeMin = FLOAT_TO_INT_UNIT + constraints[i].min - bits;
+            if (rangeMin > FLOAT_TO_INT_UNIT) rangeMin -= FLOAT_TO_INT_UNIT;
 
-            bucketRangeSig += m / BUCKET_WIDTH;
+            bucketRangeSig += rangeMin / BUCKET_WIDTH;
         }
 
         if (bucketRangeSig > UNIQUE_SIGNATURES) {
@@ -114,7 +121,7 @@ struct LUT {
         uint32_t bucketSig = 0;
 
         for (int i = 0; i < NUM_LAYERS; i++) {
-            state = (state * A) & MASK;
+            state = (state * constraints[i].lcgA) & MASK;
             uint32_t bits = state >> 24;
             newEntry.values[i] = bits;
 
@@ -147,9 +154,19 @@ void lookup_bucket_range(std::vector<LUTEntry>& lowerEntries, LUT& upperLut, uin
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
             std::vector<LUTEntry>& upperEntries = upperLut.getEntriesForBucket(new_partial);
             for (auto& low : lowerEntries) {
-                for (auto& up : upperEntries) {
-                    // TODO full check here
-                    counter++;
+                for (auto& high : upperEntries) {
+                    // Full check against stored FloatRange constraints
+                    bool passed = true;
+                    const auto& constr = upperLut.constraints;
+                    for (int c = 0; c < NUM_LAYERS; c++) {
+                        uint32_t combinedValue = (low.values[c] + high.values[c]) & MASK_24;
+                        passed &= constr[i].min <= combinedValue && combinedValue <= constr[i].max;
+                        if (!passed) break; 
+                    }
+
+                    if (passed) {
+                        counter++;
+                    }
                 }
             }
         }
@@ -204,14 +221,14 @@ int main() {
         
         std::printf("Initializing LUTs...\n");
         auto t0 = timer_now();
-        LUT upperLut;
-        LUT lowerLut;
+        LUT upperLut(constraints);
+        LUT lowerLut(constraints);
         timer_get_elapsed(t0);
 
         std::printf("Filling LUTs...\n");
         auto t1 = timer_now();
         for (uint32_t bits = 0; bits < (1u << LOWER_BIT_COUNT); bits++) {
-            lowerLut.addLowerBits(bits, constraints);
+            lowerLut.addLowerBits(bits);
         }
         for (uint32_t bits = 0; bits < (1u << 48-LOWER_BIT_COUNT); bits++) {
             upperLut.addUpperBits(bits);

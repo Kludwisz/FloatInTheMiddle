@@ -89,7 +89,7 @@ struct LUT {
         for (int i = 0; i < NUM_LAYERS; i++) {
             state = (state * A + B) & MASK;
             uint32_t bits = state >> 24;
-            newEntry.values[i] = bits >> 24;
+            newEntry.values[i] = bits;
 
             bucketRangeSig *= NUM_BUCKETS;
             uint32_t m = bits + constraints[i].min;

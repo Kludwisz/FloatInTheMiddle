@@ -182,14 +182,19 @@ struct LowerLUT : public BaseLUT {
 
 uint64_t counter = 0;
 
+struct LayerValues {
+    uint32_t values[NUM_LAYERS];
+};
+
 struct SearchNode {
     UpperLUT& upperLut;
     uint32_t* lowerArray;
     uint32_t lowerArraySize;
+    std::vector<LayerValues> lowerValues;
 };
 
 void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t partial_bucket, uint32_t depth) {
-    if (depth == 6) {
+    if (depth == NUM_LAYERS) {
         for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
             uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
             uint32_t new_partial = partial_bucket * NUM_BUCKETS + digit;
@@ -197,7 +202,8 @@ void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t part
             uint32_t numElements = node.upperLut.bucketSizes[new_partial];
             
             for (int lowIdx = 0; lowIdx < node.lowerArraySize; lowIdx++) {
-                uint32_t lowBits = node.lowerArray[lowIdx];
+                //uint32_t lowBits = node.lowerArray[lowIdx];
+                const LayerValues& lvals = node.lowerValues[lowIdx];
 
                 for (int highIdx = bucketOffset; highIdx < bucketOffset + numElements; highIdx++) {
                     // Full check against stored FloatRange constraints
@@ -207,7 +213,7 @@ void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t part
                     
                     for (int c = 0; c < NUM_LAYERS; c++) {
                         uint32_t highValue = static_cast<uint32_t>((highBits * constr[c].lcgA) & MASK_24);
-                        uint32_t lowValue = static_cast<uint32_t>(((lowBits * constr[c].lcgA + constr[c].lcgB) >> 24) & MASK_24);
+                        uint32_t lowValue = lvals.values[c];
                         uint32_t combinedValue = (lowValue + highValue) & MASK_24;
                         passed &= constr[c].min <= combinedValue && combinedValue <= constr[c].max;
                         if (!passed) break; 
@@ -222,7 +228,7 @@ void lookup_bucket_range(SearchNode& node, uint32_t remaining_sig, uint32_t part
         return;
     }
     
-    for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {
+    for (int i = 0; i < BUCKET_RANGE_SIZE; i++) {//BUCKET_RANGE_SIZE
         uint32_t new_partial = partial_bucket * NUM_BUCKETS;
         uint32_t digit = (remaining_sig + i) % NUM_BUCKETS;
         lookup_bucket_range(node, remaining_sig/NUM_BUCKETS, new_partial+digit, depth+1);
@@ -240,6 +246,15 @@ void float_in_the_middle(LowerLUT& lowerLut, UpperLUT& upperLut) {
             &(lowerLut.entries[lowerLut.bucketOffsets[startBucketSig]]),
             lowArraySize
         };
+        for (int i = 0; i < lowArraySize; i++) {
+            LayerValues lv;
+            for (int j = 0; j < NUM_LAYERS; j++) {
+                uint64_t state = (sn.lowerArray[i] * lowerLut.constraints[j].lcgA + lowerLut.constraints[j].lcgB) & MASK_48;
+                uint32_t bits = state >> 24;
+                lv.values[j] = bits;
+            }
+            sn.lowerValues.push_back(lv);
+        }
 
         lookup_bucket_range(sn, startBucketSig, 0, 1);
     }
